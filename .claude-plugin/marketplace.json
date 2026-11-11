@@ -1,0 +1,14 @@
+{
+  "name": "fachwerk",
+  "description": "Fachwerk GPE in Claude: Daten finden, Vorgänge bearbeiten und Ergebnisse prüfen.",
+  "owner": {
+    "name": "Fachwerk"
+  },
+  "plugins": [
+    {
+      "name": "fachwerk-gpe",
+      "source": "./plugins/fachwerk-gpe",
+      "description": "Mit Fachwerk GPE Daten finden, Vorgänge bearbeiten und Ergebnisse prüfen."
+    }
+  ]
+}

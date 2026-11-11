@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fachwerk-gpe": {
+      "type": "http",
+      "url": "https://mcp.fachwerk.tech/mcp"
+    }
+  }
+}
