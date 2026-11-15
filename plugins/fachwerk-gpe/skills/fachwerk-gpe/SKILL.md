@@ -1,6 +1,6 @@
 ---
 name: fachwerk-gpe
-description: "Daten in Fachwerk GPE suchen, Geschäftsvorgänge bearbeiten oder den Zustand einer Fachwerk GPE-Instanz prüfen. Nutze diesen Skill, wenn die Person mit ihren Fachwerk GPE-Daten oder Funktionen arbeiten möchte."
+description: "Daten in Fachwerk GPE suchen, Geschäftsvorgänge bearbeiten, Projektkontext lesen und beauftragte State-Änderungen ausführen oder den Zustand einer Fachwerk GPE-Instanz prüfen. Nutze diesen Skill, wenn die Person mit ihren Fachwerk GPE-Daten oder Funktionen arbeiten möchte."
 ---
 
 # Mit Fachwerk GPE arbeiten
@@ -24,6 +24,38 @@ Erledige den Auftrag in der passenden Fachwerk GPE-Instanz und prüfe das Ergebn
 5. Prüfe nach einer Änderung die Antwort und, soweit mit den Tools möglich,
    den gespeicherten Zustand. Berichte das Ergebnis mit Instanz, betroffenen
    Objekten und vorhandenen Links. Sage konkret, was blockiert oder ungeprüft ist.
+
+## Projektkontext und State
+
+Bei einem ausdrücklichen Projekt- oder Teilprojektauftrag:
+
+- Bestimme Instanz und Ziel aus dem Auftrag. Nutze bei fehlender ID die
+  beschriebenen `projects.projects.list`- oder `projects.subprojects.list`-Tools;
+  kläre ein mehrdeutiges Ziel, bevor du es bearbeitest.
+- Lies den Projektkontext über `projects.projects.get` mit `{"id": "<project-id>"}`
+  aus `project`, `projectType` und `subprojects`: Auftrag, State samt
+  `stateRevision`, Projektart, direkte PL in `head` und `pause`.
+  Bei einem Teilprojekt beginne mit `projects.subprojects.get` und dessen
+  ID: Auftrag, Ergebnis, State samt Revision und direkte TP in `head`.
+  Öffne sein Projekt über `projectId` und prüfe diesen Bezug gegen das
+  beauftragte Projekt; nutze dessen Projektart und Pause als Kontext.
+- `head.client`, `head.session` und `head.computer` können `null` sein und
+  bleiben dann unbekannt. Erfinde keine Session-ID. Kontext und native
+  Client-Identity verleihen keine Rechte; die bestehenden Source-Gates gelten.
+- Schreibe nur beauftragte State-Änderungen am jeweiligen Ziel über
+  `projects.projects.write_state` oder `projects.subprojects.write_state` mit
+  `{"id": "<ziel-id>", "expectedRevision": <gelesene stateRevision>, "sections": {...}}`.
+  Lies die aktuellen Abschnitte vor dem Write: Jeder genannte Abschnitt wird
+  vollständig ersetzt. Bewahre darin alle nicht beauftragten Inhalte und sende
+  nur zu ändernde Abschnitte. Prüfe die Antwort (`project` oder `subproject`
+  und `event`) und lies State samt Revision über das jeweilige Get-Tool zurück.
+  Bei `projects_state_revision_changed` lies das Ziel erneut und gleiche die
+  Änderung mit dem aktuellen State ab; überschreibe ihn nicht blind.
+- Read und State-Write sind weder Claim noch Safe-Pause. Leite aus `head`,
+  `pause` oder einem State-Write keine Übernahme oder bestätigte Pause ab.
+  Fehlen Tools für Claim, Head-Write, Pause-Ack, News oder Wake, benenne den
+  blockierten Schritt; führe weiterhin erlaubte Reads und beauftragte
+  State-Änderungen aus. Erfinde keine Calls oder News aus Events und `sequence`.
 
 Die Verbindung nutzt den bestehenden Browserlogin des Connectors.
 Lass die Person die Verbindung im Host anmelden, wenn sie noch nicht verbunden
