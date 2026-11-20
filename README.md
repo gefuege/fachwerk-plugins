@@ -23,4 +23,4 @@ In Team und Enterprise fügt ein Owner den Connector zuerst für die Organisatio
 
 ## Inhalt und Lizenz
 
-`plugins/fachwerk-gpe` enthält dasselbe Paket, das jede Fachwerk-Instanz im Profil unter „Fachwerk GPE in ChatGPT und Claude“ zum Download anbietet. Es gilt die Lizenz in `plugins/fachwerk-gpe/LICENSE`.
+`plugins/fachwerk-gpe` enthält dasselbe Paket, das jede Fachwerk-Instanz im Profil unter „Fachwerk GPE in ChatGPT und Claude“ zum Download anbietet. Es wird nicht hier bearbeitet: `scripts/fachwerk-plugin.sh <checkout dieses Repositorys>` in core-rust schreibt es aus dem Core neu. Es gilt die Lizenz in `plugins/fachwerk-gpe/LICENSE`.

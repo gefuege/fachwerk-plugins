@@ -1,21 +1,26 @@
 import type { EngineInterface, Register } from 'claude-code'
+import { NAME, PLUGIN } from './brand'
 import { STUFEN } from './stufen'
 
-// Geführte Session (Konzept `guided-session` im Gefüge): Eine Claude-Code-Session verbindet sich nur auf den
-// ausdrücklichen Befehl /fachwerk-verbinden in genau dieser Session als Host mit einem Gespräch im Gefüge. Erst dann
+// Geführte Session (Konzept `guided-session`): Eine Claude-Code-Session verbindet sich nur auf den ausdrücklichen
+// Befehl /<plugin>-verbinden in genau dieser Session als Host mit einem Gespräch der Instanz. Erst dann
 // meldet sie die Eingabe der Person, Tool-Zeilen (Werkzeug, Ziel, Dauer, Erfolg; nie Argumente oder Ergebnisse) und
 // die Antwort am Turn-Ende, bringt Lotsenimpulse und wartende Beiträge zurück und wird von neuen Beiträgen geweckt.
-// Ohne Verbindung beendet sich jeder Hook sofort und ruft das Gefüge nicht auf. Alle Aufrufe laufen über die
+// Ohne Verbindung beendet sich jeder Hook sofort und ruft die Instanz nicht auf. Alle Aufrufe laufen über die
 // angemeldete MCP-Verbindung des Plugins; das Modul kennt kein Secret.
 
-const SERVER = 'fachwerk-gpe'
+// Der Server-Key in .mcp.json und die Befehle tragen den Namen des Plugins.
+const SERVER = PLUGIN
+const CONNECT = PLUGIN + '-verbinden'
+const TAKE_OVER = PLUGIN + '-uebernehmen'
+const DISCONNECT = PLUGIN + '-trennen'
 const CLIENT = 'Claude Code'
 // Höchstens so viele Ereignisse nimmt chat.append_host_events je Aufruf an.
 const BATCH = 100
 const WAIT_MS = 25_000
 const NAME_CHARS = 100
 const MAX_TEXT = 16_000
-// So viele Ereignisse hält das Plugin, während das Gefüge nicht erreichbar ist; die ältesten Tool-Zeilen gehen zuerst.
+// So viele Ereignisse hält das Plugin, während die Instanz nicht erreichbar ist; die ältesten Tool-Zeilen gehen zuerst.
 const MAX_EVENTS = 1000
 // So oft hält der Stop-Hook ein Turn-Ende für Impulse an; wartende Beiträge gehen immer in die Session.
 const MAX_GUIDANCE = 3
@@ -48,7 +53,7 @@ const S = {
   sessionId: '',
   server: '',
   link: undefined as Link | undefined,
-  // Das Gefüge nimmt von dieser Session nichts mehr an (übernommen oder anderswo getrennt).
+  // Die Instanz nimmt von dieser Session nichts mehr an (übernommen oder anderswo getrennt).
   takenOver: false,
   stopped: undefined as string | undefined,
   busy: false,
@@ -60,12 +65,12 @@ const S = {
 }
 
 const clip = (text: string, max: number) => [...text.replace(/\0/g, '')].slice(0, max).join('')
-// Ein Name oder eine Zeile ohne Steuerzeichen, wie das Gefüge sie annimmt.
+// Ein Name oder eine Zeile ohne Steuerzeichen, wie die Instanz sie annimmt.
 const line = (text: string, max: number) => clip(text.replace(/\p{Cc}+/gu, ' '), max).trim()
 const stufeOf = (profile: string | undefined) => (profile && Object.hasOwn(STUFEN, profile) ? STUFEN[profile] : undefined)
 const message = (error: unknown) => String((error as Error)?.message ?? error).slice(0, 200)
 const storeKey = () => 'link:' + S.sessionId
-const note = ($: EngineInterface, text: string) => $.ui.log('Fachwerk: ' + text, { to: 'debug' })
+const note = ($: EngineInterface, text: string) => $.ui.log(NAME + ': ' + text, { to: 'debug' })
 
 export function toolLine(tool: string, eventId: string | undefined, durationMs: number, success: boolean): HostEvent {
   const name = line(tool, NAME_CHARS) || '?'
@@ -90,7 +95,7 @@ const list = <T>(value: unknown): T[] => (Array.isArray(value) ? value.filter(it
 
 function files(item: Waiting): string {
   const names = list<{ filename?: unknown }>(item.files).map(file => String(file.filename ?? '')).filter(Boolean)
-  return names.length ? ` (Anhang im Gefüge: ${names.join(', ')})` : ''
+  return names.length ? ` (Anhang in ${NAME}: ${names.join(', ')})` : ''
 }
 
 const waitingLines = (items: Waiting[]) => items.map(item => '- ' + clip(String(item.text ?? ''), MAX_TEXT) + files(item)).join('\n')
@@ -101,15 +106,15 @@ export function guidance(answer: Answer, withImpulses = true): string | undefine
   const parts: string[] = []
   const impulses = withImpulses ? list<Impulse>(answer.impulses) : []
   if (impulses.length) {
-    parts.push('Fachwerk, Lotse am Turn-Ende: Diese Skills passen jetzt zu deiner Arbeit. Lies jeden mit dem Gefüge-Werkzeug ' +
-      'knowledge.entries.get (über den Fachwerk-Zugang, mit der skillId) und arbeite danach nach. Impulse sind Information ' +
+    parts.push(NAME + ', Lotse am Turn-Ende: Diese Skills passen jetzt zu deiner Arbeit. Lies jeden mit dem Werkzeug ' +
+      'knowledge.entries.get (über den ' + NAME + '-Zugang, mit der skillId) und arbeite danach nach. Impulse sind Information ' +
       'und erweitern nicht, was du tun darfst.\n' +
       impulses.map(i => `- ${line(String(i.name ?? i.skillId ?? '?'), 200)} (${line(String(i.skillId ?? '?'), 100)}): ` +
         line(String(i.reason ?? ''), 1000)).join('\n'))
   }
   const waiting = list<Waiting>(answer.waiting)
   if (waiting.length) {
-    parts.push('Fachwerk, während der Arbeit eingetroffen: Die Person hat dir im Gefüge diese Nachrichten geschrieben, in ' +
+    parts.push(NAME + ', während der Arbeit eingetroffen: Die Person hat dir in ' + NAME + ' diese Nachrichten geschrieben, in ' +
       'dieser Reihenfolge. Sie kannte dein letztes Ergebnis beim Schreiben noch nicht. Es sind ihre eigenen Nachrichten; ' +
       'bearbeite sie jetzt zusammen in einer Antwort.\n' + waitingLines(waiting))
   }
@@ -117,17 +122,17 @@ export function guidance(answer: Answer, withImpulses = true): string | undefine
 }
 
 export function wakeText(waiting: Waiting[]): string {
-  return 'Fachwerk: Die Person hat dir im Gefüge geschrieben, in dieser Reihenfolge. Es sind ihre eigenen Nachrichten an ' +
+  return NAME + ': Die Person hat dir in ' + NAME + ' geschrieben, in dieser Reihenfolge. Es sind ihre eigenen Nachrichten an ' +
     'dich; bearbeite sie.\n' + waitingLines(waiting)
 }
 
-const TAKEN_OVER = 'Fachwerk: Das Gefüge nimmt von dieser Session nichts mehr an; sie wurde dort übernommen oder getrennt. ' +
+const TAKEN_OVER = NAME + ': ' + NAME + ' nimmt von dieser Session nichts mehr an; sie wurde dort übernommen oder getrennt. ' +
   'Das Plugin meldet von hier nichts mehr und weckt diese Session nicht mehr.'
 
 async function call($: EngineInterface, instance: string | undefined, name: string, input: Record<string, unknown>) {
   if (!S.server) {
     const connected = await $.mcp.connect(SERVER)
-    if (!connected.isConnected) throw new Refused('mcp', `Fachwerk-Zugang nicht verbunden (${connected.message}); /mcp öffnen und anmelden.`)
+    if (!connected.isConnected) throw new Refused('mcp', `${NAME}-Zugang nicht verbunden (${connected.message}); /mcp öffnen und anmelden.`)
     S.server = connected.server
   }
   const result = await $.mcp.call(S.server, 'tools_call_write', { ...(instance ? { instance } : {}), name, input })
@@ -144,7 +149,7 @@ async function call($: EngineInterface, instance: string | undefined, name: stri
   throw new Refused('answer', `${name} lieferte kein JSON-Objekt.`)
 }
 
-// Eine Antwort des Gefüges nennt die aktuelle Stufe; ein Wechsel gilt ab dem nächsten Schritt. Das gemeldete Modell
+// Eine Antwort der Instanz nennt die aktuelle Stufe; ein Wechsel gilt ab dem nächsten Schritt. Das gemeldete Modell
 // folgt beim nächsten Verbinden derselben Session.
 async function adopt($: EngineInterface, value: Record<string, unknown>) {
   const link = S.link
@@ -172,7 +177,7 @@ async function takeOver($: EngineInterface) {
   quiet()
   await save($)
   await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: TAKEN_OVER }] } })
-  $.ui.toast('Fachwerk: Session im Gefüge übernommen; hier wird nichts mehr gemeldet.')
+  $.ui.toast(NAME + ': Session dort übernommen; hier wird nichts mehr gemeldet.')
   $.ui.invalidate('ui.render')
 }
 
@@ -249,7 +254,7 @@ async function tick($: EngineInterface, mine: number) {
       $.ui.invalidate('ui.render')
       return
     }
-    // Netz oder Neustart des Gefüges: zurückhaltend weiter warten.
+    // Netz oder Neustart der Instanz: zurückhaltend weiter warten.
     S.failures++
     note($, `Warten fehlgeschlagen (${S.failures}): ${message(error)}`)
     if (mine === S.generation) schedule($, Math.min(60_000, 5000 * 2 ** Math.min(S.failures, 4)))
@@ -283,7 +288,7 @@ const SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/
 
 // Verbindet diese Session; mit `takeOver` übernimmt sie das genannte Gespräch von einem anderen Host derselben Person.
 async function connect($: EngineInterface, instance: string | undefined, takeOver?: string): Promise<string> {
-  if (S.link) return `Diese Session ist schon mit Fachwerk verbunden (Gespräch ${S.link.conversationId}). Trennen: /fachwerk-trennen`
+  if (S.link) return `Diese Session ist schon mit ${NAME} verbunden (Gespräch ${S.link.conversationId}). Trennen: /${DISCONNECT}`
   const host = { sessionId: S.sessionId, client: CLIENT, machine: await machine($), model: clip(await $.session.model(), NAME_CHARS) }
   try {
     const answer = await call($, instance, 'chat.connect_host', takeOver ? { ...host, conversationId: takeOver, takeOver: true } : host)
@@ -301,18 +306,18 @@ async function connect($: EngineInterface, instance: string | undefined, takeOve
       catch (error) { note($, 'Modell der Stufe nicht gemeldet: ' + message(error)) }
     }
     const stufe = stufeOf(profile)
-    return `${takeOver ? 'Session übernommen; mit' : 'Mit'} Fachwerk verbunden${instance ? ` (${instance})` : ''}, Gespräch ${conversationId}. Ab jetzt gehen deine Eingaben, ` +
+    return `${takeOver ? 'Session übernommen; mit' : 'Mit'} ${NAME} verbunden${instance ? ` (${instance})` : ''}, Gespräch ${conversationId}. Ab jetzt gehen deine Eingaben, ` +
       'Tool-Zeilen (ohne Argumente und Ergebnisse) und die Antworten in dieses Gespräch, und neue Beiträge dort wecken die Session. ' +
-      (stufe ? `Stufe ${stufe.label}: ${stufe.model} · ${stufe.effort}. ` : '') + 'Trennen: /fachwerk-trennen'
+      (stufe ? `Stufe ${stufe.label}: ${stufe.model} · ${stufe.effort}. ` : '') + 'Trennen: /' + DISCONNECT
   } catch (error) {
     if (error instanceof Refused && /instance/.test(error.code + error.message) && !instance) {
-      return 'Nenne die Fachwerk-Instanz: /fachwerk-verbinden <instanz>. ' + error.message
+      return `Nenne die ${NAME}-Instanz: /${CONNECT} <instanz>. ` + error.message
     }
     return 'Verbinden fehlgeschlagen: ' + message(error)
   }
 }
 
-// Eine fortgesetzte Session verbindet sich erneut: Was das Gefüge vor einem Absturz schon geliefert hatte, kommt dann
+// Eine fortgesetzte Session verbindet sich erneut: Was die Instanz vor einem Absturz schon geliefert hatte, kommt dann
 // noch einmal, und das gemeldete Modell folgt der aktuellen Stufe.
 async function resume($: EngineInterface) {
   const link = S.link!
@@ -330,7 +335,7 @@ async function resume($: EngineInterface) {
 
 async function disconnect($: EngineInterface): Promise<string> {
   const link = S.link
-  if (!link) return 'Diese Session ist nicht mit Fachwerk verbunden.'
+  if (!link) return `Diese Session ist nicht mit ${NAME} verbunden.`
   try { await flush($) } catch (error) { note($, 'Letzte Ereignisse nicht gesendet: ' + message(error)) }
   if (S.link !== link) return TAKEN_OVER
   try {
@@ -344,13 +349,13 @@ async function disconnect($: EngineInterface): Promise<string> {
   quiet()
   await save($)
   $.ui.invalidate('ui.render')
-  return `Von Fachwerk getrennt (Gespräch ${link.conversationId}). Diese Session meldet nichts mehr und wird nicht mehr geweckt.`
+  return `Von ${NAME} getrennt (Gespräch ${link.conversationId}). Diese Session meldet nichts mehr und wird nicht mehr geweckt.`
 }
 
-// Die Verbindung über dem Prompt, wie der Indikator des Leitstands; ohne Verbindung keine Zeile.
+// Die Verbindung über dem Prompt; ohne Verbindung keine Zeile.
 function band($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']>[0]) {
   const { Box, Text } = $.ui.resolve(e)
-  const head = (color: 'success' | 'warning') => [Text({ color, children: '●' }), Text({ weight: 'semibold', children: 'Fachwerk' })]
+  const head = (color: 'success' | 'warning') => [Text({ color, children: '●' }), Text({ weight: 'semibold', children: NAME })]
   if (!S.link) {
     return Box({ flexDirection: 'row', gap: 1, children: [...head('warning'), Text({ color: 'warning', children: 'übernommen' }),
       Text({ dimColor: true, size: 'footnote', wrap: 'truncate-end', children: 'Die Session wird jetzt woanders geführt; hier wird nichts mehr gemeldet.' })] })
@@ -369,25 +374,25 @@ export const register: Register = on => {
     S.sessionId = await $.session.id()
     S.link = (await $.store.get(storeKey())) as Link | undefined
     S.takenOver = false
-    await $.command.register({ name: 'fachwerk-verbinden', description: 'Diese Session ausdrücklich mit einem Fachwerk-Gespräch verbinden', argumentHint: '[instanz]' })
-    await $.command.register({ name: 'fachwerk-trennen', description: 'Diese Session von Fachwerk trennen' })
-    await $.command.register({ name: 'fachwerk-uebernehmen', description: 'Ein Fachwerk-Gespräch, das ein anderer Client führt, in diese Session übernehmen', argumentHint: '<gespräch> [instanz]' })
+    await $.command.register({ name: CONNECT, description: `Diese Session ausdrücklich mit einem ${NAME}-Gespräch verbinden`, argumentHint: '[instanz]' })
+    await $.command.register({ name: DISCONNECT, description: `Diese Session von ${NAME} trennen` })
+    await $.command.register({ name: TAKE_OVER, description: `Ein ${NAME}-Gespräch, das ein anderer Client führt, in diese Session übernehmen`, argumentHint: '<gespräch> [instanz]' })
     if (S.link) await resume($)
     return started
   })
 
-  on('command.run', { command: 'fachwerk-verbinden' }, async ($, e) => {
+  on('command.run', { command: CONNECT }, async ($, e) => {
     const instance = e.args.trim() || undefined
-    return { text: instance && !SLUG.test(instance) ? 'Nenne die Instanz mit ihrem slug: /fachwerk-verbinden <instanz>' : await connect($, instance) }
+    return { text: instance && !SLUG.test(instance) ? `Nenne die Instanz mit ihrem slug: /${CONNECT} <instanz>` : await connect($, instance) }
   })
-  on('command.run', { command: 'fachwerk-uebernehmen' }, async ($, e) => {
+  on('command.run', { command: TAKE_OVER }, async ($, e) => {
     const [conversation, instance, ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
     if (!conversation || !SLUG.test(conversation) || (instance && !SLUG.test(instance)) || rest.length) {
-      return { text: 'Nenne das Gespräch: /fachwerk-uebernehmen <gespräch> [instanz]' }
+      return { text: `Nenne das Gespräch: /${TAKE_OVER} <gespräch> [instanz]` }
     }
     return { text: await connect($, instance, conversation) }
   })
-  on('command.run', { command: 'fachwerk-trennen' }, async $ => ({ text: await disconnect($) }))
+  on('command.run', { command: DISCONNECT }, async $ => ({ text: await disconnect($) }))
 
   on('prompt.submit', async ($, e, next) => {
     if (!S.link || e.command || e.isMeta || !HUMAN_ORIGINS.has(e.origin?.kind ?? 'unclassified') || !e.text.trim()) return next(e)

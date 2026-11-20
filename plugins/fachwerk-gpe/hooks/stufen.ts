@@ -1,5 +1,5 @@
-// Die Stufe einer Session im Gefüge (Konzept `guided-session`, Abschnitt Stufe) als Modell und Denkstufe in
-// Claude Code. Das Gefüge nennt einem externen Client nur die Stufe; diese Tabelle übersetzt sie und wird mit dem
+// Die Stufe einer Session (Konzept `guided-session`, Abschnitt Stufe) als Modell und Denkstufe in Claude Code.
+// Die Instanz nennt einem externen Client nur die Stufe; diese Tabelle übersetzt sie und wird mit dem
 // Plugin gepflegt. Modelle sind Aliase, wie `--model` sie annimmt.
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type Stufe = { label: string; model: string; effort: Effort }

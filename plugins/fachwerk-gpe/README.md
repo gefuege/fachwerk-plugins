@@ -18,23 +18,23 @@ sein. Deine vorhandenen Rechte bestimmen, welche Daten und Funktionen du nutzt.
 
 ## Claude Code als geführte Session
 
-In Claude Code kann eine einzelne Session ausdrücklich zu einem Gespräch im
-Gefüge werden. Ohne diesen Befehl sendet das Plugin nichts an das Gefüge.
+In Claude Code kann eine einzelne Session ausdrücklich zu einem Gespräch in
+Fachwerk GPE werden. Ohne diesen Befehl sendet das Plugin nichts an Fachwerk GPE.
 
-- `/fachwerk-verbinden <instanz>` verbindet genau diese Session. Ab dann gehen
+- `/fachwerk-gpe-verbinden <instanz>` verbindet genau diese Session. Ab dann gehen
   deine Eingaben, Tool-Zeilen (Werkzeug, Ziel, Dauer, Erfolg; nie Argumente
   oder Ergebnisse) und die Antworten in das Gespräch. Impulse des Lotsen und
-  Beiträge, die du im Gefüge schreibst, kommen am Turn-Ende zurück; schreibst
+  Beiträge, die du in Fachwerk GPE schreibst, kommen am Turn-Ende zurück; schreibst
   du dort, während die Session ruht, weckt der Beitrag sie.
-- Über dem Prompt steht „Fachwerk verbunden“ mit der Stufe der Session. Die
+- Über dem Prompt steht „Fachwerk GPE verbunden“ mit der Stufe der Session. Die
   Stufe bestimmt Modell und Denkstufe nach der Tabelle in `hooks/stufen.ts`.
-- `/fachwerk-uebernehmen <gespräch> [instanz]` übernimmt ein Gespräch, das
+- `/fachwerk-gpe-uebernehmen <gespräch> [instanz]` übernimmt ein Gespräch, das
   gerade ein anderer Client führt, in diese Session; der andere Client sendet
   danach nichts mehr.
-- Stellst du die Stufe im Gefüge um, gilt sie in der Session ab der nächsten
-  Antwort des Gefüges.
-- `/fachwerk-trennen` trennt die Session. Übernimmst du sie im Gefüge, meldet
+- Stellst du die Stufe in Fachwerk GPE um, gilt sie in der Session ab der nächsten
+  Antwort.
+- `/fachwerk-gpe-trennen` trennt die Session. Übernimmst du sie in Fachwerk GPE, meldet
   das Plugin das hier und sendet danach nichts mehr.
 
-Das Plugin ruft das Gefüge über seinen angemeldeten Fachwerk-Zugang auf; es
+Das Plugin ruft Fachwerk GPE über seinen angemeldeten Fachwerk GPE-Zugang auf; es
 enthält kein Token.

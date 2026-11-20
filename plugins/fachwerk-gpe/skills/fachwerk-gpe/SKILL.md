@@ -36,7 +36,11 @@ Bei einem ausdrücklichen Projekt- oder Teilprojektauftrag:
   aus `project`, `projectType` und `subprojects`: Auftrag, State samt
   `stateRevision`, Projektart, direkte PL in `head` und `pause`.
   Bei einem Teilprojekt beginne mit `projects.subprojects.get` und dessen
-  ID: Auftrag, Ergebnis, State samt Revision und direkte TP in `head`.
+  ID: Auftrag, Ergebnis, State samt Revision, direkte TP in `head` und
+  `stages`, die Etappen in ihrer Reihenfolge mit abgeleitetem `status` und
+  ihren Arbeitsschritten (`steps`: Bearbeiter, Stand, Kriterien, Ergebnis,
+  Nachweise, frühere Abschlüsse). Etappen und Arbeitsschritte bearbeitest du
+  mit `projects.stages.*` und `projects.steps.*`.
   Öffne sein Projekt über `projectId` und prüfe diesen Bezug gegen das
   beauftragte Projekt; nutze dessen Projektart und Pause als Kontext.
 - `head.client`, `head.session` und `head.computer` können `null` sein und
