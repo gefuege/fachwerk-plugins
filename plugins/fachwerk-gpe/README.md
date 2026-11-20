@@ -15,3 +15,21 @@ Beginne beispielsweise mit: „Welche Fachwerk GPE-Instanzen kann ich erreichen?
 Nenne für weitere Aufträge die gewünschte Instanz. Meldet eine Instanz
 `instance_login_required`, kann dort zuerst eine Anmeldung im Browser nötig
 sein. Deine vorhandenen Rechte bestimmen, welche Daten und Funktionen du nutzt.
+
+## Claude Code als geführte Session
+
+In Claude Code kann eine einzelne Session ausdrücklich zu einem Gespräch im
+Gefüge werden. Ohne diesen Befehl sendet das Plugin nichts an das Gefüge.
+
+- `/fachwerk-verbinden <instanz>` verbindet genau diese Session. Ab dann gehen
+  deine Eingaben, Tool-Zeilen (Werkzeug, Ziel, Dauer, Erfolg; nie Argumente
+  oder Ergebnisse) und die Antworten in das Gespräch. Impulse des Lotsen und
+  Beiträge, die du im Gefüge schreibst, kommen am Turn-Ende zurück; schreibst
+  du dort, während die Session ruht, weckt der Beitrag sie.
+- Über dem Prompt steht „Fachwerk verbunden“ mit der Stufe der Session. Die
+  Stufe bestimmt Modell und Denkstufe nach der Tabelle in `hooks/stufen.ts`.
+- `/fachwerk-trennen` trennt die Session. Übernimmst du sie im Gefüge, meldet
+  das Plugin das hier und sendet danach nichts mehr.
+
+Das Plugin ruft das Gefüge über seinen angemeldeten Fachwerk-Zugang auf; es
+enthält kein Token.
