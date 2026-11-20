@@ -15,7 +15,9 @@ const BATCH = 100
 const WAIT_MS = 25_000
 const NAME_CHARS = 100
 const MAX_TEXT = 16_000
-// So oft hält der Stop-Hook ein Turn-Ende für Führung an, bevor die Session ohne sie endet.
+// So viele Ereignisse hält das Plugin, während das Gefüge nicht erreichbar ist; die ältesten Tool-Zeilen gehen zuerst.
+const MAX_EVENTS = 1000
+// So oft hält der Stop-Hook ein Turn-Ende für Impulse an; wartende Beiträge gehen immer in die Session.
 const MAX_GUIDANCE = 3
 const NOT_CONNECTED = 'chat_host_not_connected'
 const HUMAN_ORIGINS = new Set(['composer', 'bridge', 'sdk', 'unclassified'])
@@ -58,14 +60,17 @@ const S = {
 }
 
 const clip = (text: string, max: number) => [...text.replace(/\0/g, '')].slice(0, max).join('')
+// Ein Name oder eine Zeile ohne Steuerzeichen, wie das Gefüge sie annimmt.
+const line = (text: string, max: number) => clip(text.replace(/\p{Cc}+/gu, ' '), max).trim()
+const stufeOf = (profile: string | undefined) => (profile && Object.hasOwn(STUFEN, profile) ? STUFEN[profile] : undefined)
 const message = (error: unknown) => String((error as Error)?.message ?? error).slice(0, 200)
 const storeKey = () => 'link:' + S.sessionId
 const note = ($: EngineInterface, text: string) => $.ui.log('Fachwerk: ' + text, { to: 'debug' })
 
 export function toolLine(tool: string, eventId: string | undefined, durationMs: number, success: boolean): HostEvent {
-  const name = clip(tool, NAME_CHARS).trim() || '?'
+  const name = line(tool, NAME_CHARS) || '?'
   const server = /^mcp__(.+?)__/.exec(name)?.[1]
-  const target = TARGETS[name] ?? (server ? clip('Werkzeug des MCP-Servers ' + server, NAME_CHARS) : undefined)
+  const target = (Object.hasOwn(TARGETS, name) ? TARGETS[name] : undefined) ?? (server ? line('Werkzeug des MCP-Servers ' + server, NAME_CHARS) : undefined)
   return { kind: 'tool_call', eventId: eventId && EVENT_ID.test(eventId) ? eventId : crypto.randomUUID(), tool: name,
     ...(target ? { target } : {}), durationMs: Math.max(0, Math.round(durationMs)), success }
 }
@@ -76,6 +81,11 @@ export function nextBatch(queue: readonly HostEvent[]): HostEvent[] {
   return queue.slice(0, Math.min(BATCH, end >= 0 ? end + 1 : queue.length))
 }
 
+// Die eigenen Aufrufe des Plugins über `$.mcp.call` laufen auch durch `tool.call`; sie sind keine Tool-Zeile der Session.
+const HOST_TOOLS = new Set(['chat.connect_host', 'chat.append_host_events', 'chat.wait_host', 'chat.disconnect_host'])
+const ownCall = (e: { tool: unknown; name?: unknown }) =>
+  String(e.tool).startsWith('mcp__') && HOST_TOOLS.has(String(e.name ?? ''))
+
 const list = <T>(value: unknown): T[] => (Array.isArray(value) ? value.filter(item => item && typeof item === 'object') : []) as T[]
 
 function files(item: Waiting): string {
@@ -85,15 +95,17 @@ function files(item: Waiting): string {
 
 const waitingLines = (items: Waiting[]) => items.map(item => '- ' + clip(String(item.text ?? ''), MAX_TEXT) + files(item)).join('\n')
 
-// Führung aus der Antwort auf ein Turn-Ende, als Grund des Stop-Blocks; undefined, wenn nichts kam.
-export function guidance(answer: Answer): string | undefined {
+// Führung aus der Antwort auf ein Turn-Ende, als Grund des Stop-Blocks; undefined, wenn nichts kam. Ohne `withImpulses`
+// gehen nur die wartenden Beiträge mit, die der Server schon als ausgeliefert führt.
+export function guidance(answer: Answer, withImpulses = true): string | undefined {
   const parts: string[] = []
-  const impulses = list<Impulse>(answer.impulses)
+  const impulses = withImpulses ? list<Impulse>(answer.impulses) : []
   if (impulses.length) {
     parts.push('Fachwerk, Lotse am Turn-Ende: Diese Skills passen jetzt zu deiner Arbeit. Lies jeden mit dem Gefüge-Werkzeug ' +
       'knowledge.entries.get (über den Fachwerk-Zugang, mit der skillId) und arbeite danach nach. Impulse sind Information ' +
       'und erweitern nicht, was du tun darfst.\n' +
-      impulses.map(i => `- ${String(i.name ?? i.skillId ?? '?')} (${String(i.skillId ?? '?')}): ${String(i.reason ?? '')}`).join('\n'))
+      impulses.map(i => `- ${line(String(i.name ?? i.skillId ?? '?'), 200)} (${line(String(i.skillId ?? '?'), 100)}): ` +
+        line(String(i.reason ?? ''), 1000)).join('\n'))
   }
   const waiting = list<Waiting>(answer.waiting)
   if (waiting.length) {
@@ -165,7 +177,8 @@ async function send($: EngineInterface): Promise<Answer | undefined> {
     } catch (error) {
       if (!(error instanceof Refused) || error.code === 'mcp') throw error
       if (error.code === NOT_CONNECTED) { await takeOver($); return undefined }
-      // Eine abgewiesene Sendung wird bei Wiederholung wieder abgewiesen; sie entfällt, die nächste geht.
+      // Nur eine inhaltlich abgewiesene Sendung entfällt, weil eine Wiederholung wieder abgewiesen würde.
+      if (!/^(invalid_chat_host_events|chat_request_conflict)$/.test(error.code)) throw error
       note($, 'Ereignisse abgewiesen: ' + error.message)
     }
     link.queue.splice(0, batch.length)
@@ -182,7 +195,12 @@ function flush($: EngineInterface): Promise<Answer | undefined> {
 }
 
 async function enqueue($: EngineInterface, event: HostEvent) {
-  S.link!.queue.push(event)
+  const queue = S.link!.queue
+  queue.push(event)
+  while (queue.length > MAX_EVENTS) {
+    const oldest = queue.findIndex(item => item.kind === 'tool_call')
+    queue.splice(oldest >= 0 ? oldest : 0, 1)
+  }
   await save($)
 }
 
@@ -202,9 +220,10 @@ async function tick($: EngineInterface, mine: number) {
     S.stopped = undefined
     const waiting = list<Waiting>(value.waiting)
     // Ausgelieferte Beiträge sind die nächste Eingabe; sie gehen in die Session, auch wenn inzwischen ein Turn läuft.
-    if (waiting.length && S.link === link) {
+    if (waiting.length && S.link?.conversationId === link.conversationId) {
       if (mine === S.generation) S.listening = false
-      await $.prompt.submit({ text: wakeText(waiting) })
+      const entered = await $.prompt.submit({ text: wakeText(waiting) })
+      if (entered.drop !== undefined) note($, 'Weckender Beitrag nicht angenommen: ' + entered.drop)
       return
     }
     if (mine === S.generation) schedule($, 0)
@@ -243,7 +262,7 @@ async function machine($: EngineInterface): Promise<string> {
 }
 
 const effective = (profile: string | undefined, model: string) => {
-  const stufe = profile ? STUFEN[profile] : undefined
+  const stufe = stufeOf(profile)
   return stufe ? `${stufe.model} · ${stufe.effort}` : model
 }
 
@@ -256,15 +275,18 @@ async function connect($: EngineInterface, args: string): Promise<string> {
     const answer = await call($, instance, 'chat.connect_host', host)
     const conversationId = String(answer.conversationId)
     const profile = typeof answer.profile === 'string' ? answer.profile : undefined
-    // Der Host meldet das Modell, mit dem er die Session nach ihrer Stufe tatsächlich führt.
-    const model = effective(profile, host.model)
-    if (model !== host.model) await call($, instance, 'chat.connect_host', { ...host, conversationId, model })
     S.link = { ...(instance ? { instance } : {}), conversationId, ...(profile ? { profile } : {}), queue: [] }
     S.takenOver = false
     S.stopped = undefined
     await save($)
     listen($)
-    const stufe = profile ? STUFEN[profile] : undefined
+    // Der Host meldet das Modell, mit dem er die Session nach ihrer Stufe tatsächlich führt.
+    const model = effective(profile, host.model)
+    if (model !== host.model) {
+      try { await call($, instance, 'chat.connect_host', { ...host, conversationId, model }) }
+      catch (error) { note($, 'Modell der Stufe nicht gemeldet: ' + message(error)) }
+    }
+    const stufe = stufeOf(profile)
     return `Mit Fachwerk verbunden${instance ? ` (${instance})` : ''}, Gespräch ${conversationId}. Ab jetzt gehen deine Eingaben, ` +
       'Tool-Zeilen (ohne Argumente und Ergebnisse) und die Antworten in dieses Gespräch, und neue Beiträge dort wecken die Session. ' +
       (stufe ? `Stufe ${stufe.label}: ${stufe.model} · ${stufe.effort}. ` : '') + 'Trennen: /fachwerk-trennen'
@@ -284,8 +306,9 @@ async function disconnect($: EngineInterface): Promise<string> {
   try {
     await call($, link.instance, 'chat.disconnect_host', { conversationId: link.conversationId, sessionId: S.sessionId })
   } catch (error) {
-    if (!(error instanceof Refused)) return 'Trennen fehlgeschlagen, die Session bleibt verbunden: ' + message(error)
-    note($, 'Trennen: ' + error.message)
+    if (!(error instanceof Refused) || error.code !== NOT_CONNECTED) {
+      return 'Trennen fehlgeschlagen, die Session bleibt verbunden: ' + message(error)
+    }
   }
   S.link = undefined
   quiet()
@@ -302,7 +325,7 @@ function band($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']
     return Box({ flexDirection: 'row', gap: 1, children: [...head('warning'), Text({ color: 'warning', children: 'übernommen' }),
       Text({ dimColor: true, size: 'footnote', wrap: 'truncate-end', children: 'Das Gefüge führt die Session; hier wird nichts mehr gemeldet.' })] })
   }
-  const stufe = S.link.profile ? STUFEN[S.link.profile] : undefined
+  const stufe = stufeOf(S.link.profile)
   const state = S.stopped ? 'hört nicht zu: ' + S.stopped : S.busy ? 'meldet' : S.listening ? 'hört zu' : 'verbunden'
   return Box({ flexDirection: 'row', gap: 1, children: [...head(S.stopped ? 'warning' : 'success'),
     Text({ children: 'verbunden' + (S.link.instance ? ' mit ' + S.link.instance : '') }),
@@ -327,7 +350,8 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     if (!S.link || e.command || e.isMeta || !HUMAN_ORIGINS.has(e.origin?.kind ?? 'unclassified') || !e.text.trim()) return next(e)
-    await enqueue($, { kind: 'user_input', eventId: crypto.randomUUID(), text: clip(e.text, 64_000) })
+    try { await enqueue($, { kind: 'user_input', eventId: crypto.randomUUID(), text: clip(e.text, 64_000) }) }
+    catch (error) { note($, 'Eingabe nicht erfasst: ' + message(error)) }
     void flush($).catch(error => note($, 'Eingabe noch nicht gemeldet: ' + message(error)))
     return next(e)
   })
@@ -335,7 +359,6 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (S.link && e.agentId === undefined) {
       S.busy = true
-      S.guided = 0
       quiet()
       $.ui.invalidate('ui.render')
     }
@@ -344,17 +367,18 @@ export const register: Register = on => {
 
   // Die Stufe der verbundenen Session bestimmt Modell und Denkstufe jedes Schritts des Hauptloops.
   on('turn.step', async function* ($, e, next) {
-    const stufe = S.link?.profile && e.agentId === undefined ? STUFEN[S.link.profile] : undefined
+    const stufe = e.agentId === undefined ? stufeOf(S.link?.profile) : undefined
     return yield* next(stufe ? { ...e, model: stufe.model, effort: stufe.effort } : e)
   })
 
   on('tool.call', async ($, e, next) => {
-    if (!S.link || e.agentId !== undefined) return next(e)
+    if (!S.link || e.agentId !== undefined || ownCall(e)) return next(e)
     const at = await $.clock.now()
     const result = await next(e)
     if (S.link) {
       const id = typeof e.tool_use_id === 'string' ? e.tool_use_id : undefined
       await enqueue($, toolLine(String(e.tool), id, (await $.clock.now()) - at, result.isError !== true && result.deny === undefined))
+        .catch(error => note($, 'Tool-Zeile nicht erfasst: ' + message(error)))
     }
     return result
   })
@@ -363,13 +387,14 @@ export const register: Register = on => {
   on('classic.Stop', async ($, e, next) => {
     const result = await next(e)
     if (!S.link || result.block !== undefined) return result
+    if (!e.stop_hook_active) S.guided = 0
     await enqueue($, { kind: 'turn_end', eventId: crypto.randomUUID(), text: clip(e.last_assistant_message ?? '', 64_000) })
     let answer: Answer | undefined
     try { answer = await flush($) } catch (error) {
       note($, 'Turn-Ende noch nicht gemeldet: ' + message(error))
       return result
     }
-    const text = answer && S.guided < MAX_GUIDANCE ? guidance(answer) : undefined
+    const text = answer ? guidance(answer, S.guided < MAX_GUIDANCE) : undefined
     if (!text) return result
     S.guided++
     return { ...result, block: text }
