@@ -144,6 +144,17 @@ async function call($: EngineInterface, instance: string | undefined, name: stri
   throw new Refused('answer', `${name} lieferte kein JSON-Objekt.`)
 }
 
+// Eine Antwort des Gefüges nennt die aktuelle Stufe; ein Wechsel gilt ab dem nächsten Schritt. Das gemeldete Modell
+// folgt beim nächsten Verbinden derselben Session.
+async function adopt($: EngineInterface, value: Record<string, unknown>) {
+  const link = S.link
+  const profile = typeof value.profile === 'string' ? value.profile : undefined
+  if (!link || !profile || profile === link.profile) return
+  link.profile = profile
+  await save($)
+  $.ui.invalidate('ui.render')
+}
+
 async function save($: EngineInterface) {
   if (S.link) await $.store.set(storeKey(), S.link)
   else await $.store.delete(storeKey())
@@ -174,6 +185,7 @@ async function send($: EngineInterface): Promise<Answer | undefined> {
       const value = await call($, link.instance, 'chat.append_host_events',
         { conversationId: link.conversationId, sessionId: S.sessionId, events: batch })
       if (batch.at(-1)?.kind === 'turn_end') answer = value
+      await adopt($, value)
     } catch (error) {
       if (!(error instanceof Refused) || error.code === 'mcp') throw error
       if (error.code === NOT_CONNECTED) { await takeOver($); return undefined }
@@ -219,6 +231,7 @@ async function tick($: EngineInterface, mine: number) {
     S.failures = 0
     S.stopped = undefined
     const waiting = list<Waiting>(value.waiting)
+    await adopt($, value)
     // Ausgelieferte Beiträge sind die nächste Eingabe; sie gehen in die Session, auch wenn inzwischen ein Turn läuft.
     if (waiting.length && S.link?.conversationId === link.conversationId) {
       if (mine === S.generation) S.listening = false
@@ -266,13 +279,14 @@ const effective = (profile: string | undefined, model: string) => {
   return stufe ? `${stufe.model} · ${stufe.effort}` : model
 }
 
-async function connect($: EngineInterface, args: string): Promise<string> {
+const SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/
+
+// Verbindet diese Session; mit `takeOver` übernimmt sie das genannte Gespräch von einem anderen Host derselben Person.
+async function connect($: EngineInterface, instance: string | undefined, takeOver?: string): Promise<string> {
   if (S.link) return `Diese Session ist schon mit Fachwerk verbunden (Gespräch ${S.link.conversationId}). Trennen: /fachwerk-trennen`
-  const instance = args.trim() || undefined
-  if (instance && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(instance)) return 'Nenne die Instanz mit ihrem slug: /fachwerk-verbinden <instanz>'
   const host = { sessionId: S.sessionId, client: CLIENT, machine: await machine($), model: clip(await $.session.model(), NAME_CHARS) }
   try {
-    const answer = await call($, instance, 'chat.connect_host', host)
+    const answer = await call($, instance, 'chat.connect_host', takeOver ? { ...host, conversationId: takeOver, takeOver: true } : host)
     const conversationId = String(answer.conversationId)
     const profile = typeof answer.profile === 'string' ? answer.profile : undefined
     S.link = { ...(instance ? { instance } : {}), conversationId, ...(profile ? { profile } : {}), queue: [] }
@@ -287,7 +301,7 @@ async function connect($: EngineInterface, args: string): Promise<string> {
       catch (error) { note($, 'Modell der Stufe nicht gemeldet: ' + message(error)) }
     }
     const stufe = stufeOf(profile)
-    return `Mit Fachwerk verbunden${instance ? ` (${instance})` : ''}, Gespräch ${conversationId}. Ab jetzt gehen deine Eingaben, ` +
+    return `${takeOver ? 'Session übernommen; mit' : 'Mit'} Fachwerk verbunden${instance ? ` (${instance})` : ''}, Gespräch ${conversationId}. Ab jetzt gehen deine Eingaben, ` +
       'Tool-Zeilen (ohne Argumente und Ergebnisse) und die Antworten in dieses Gespräch, und neue Beiträge dort wecken die Session. ' +
       (stufe ? `Stufe ${stufe.label}: ${stufe.model} · ${stufe.effort}. ` : '') + 'Trennen: /fachwerk-trennen'
   } catch (error) {
@@ -296,6 +310,22 @@ async function connect($: EngineInterface, args: string): Promise<string> {
     }
     return 'Verbinden fehlgeschlagen: ' + message(error)
   }
+}
+
+// Eine fortgesetzte Session verbindet sich erneut: Was das Gefüge vor einem Absturz schon geliefert hatte, kommt dann
+// noch einmal, und das gemeldete Modell folgt der aktuellen Stufe.
+async function resume($: EngineInterface) {
+  const link = S.link!
+  const model = clip(await $.session.model(), NAME_CHARS)
+  try {
+    const answer = await call($, link.instance, 'chat.connect_host', { conversationId: link.conversationId, sessionId: S.sessionId,
+      client: CLIENT, machine: await machine($), model: effective(typeof link.profile === 'string' ? link.profile : undefined, model) })
+    await adopt($, answer)
+  } catch (error) {
+    if (error instanceof Refused && error.code !== 'mcp') return takeOver($)
+    note($, 'Erneutes Verbinden fehlgeschlagen: ' + message(error))
+  }
+  listen($)
 }
 
 async function disconnect($: EngineInterface): Promise<string> {
@@ -323,7 +353,7 @@ function band($: EngineInterface, e: Parameters<EngineInterface['ui']['resolve']
   const head = (color: 'success' | 'warning') => [Text({ color, children: '●' }), Text({ weight: 'semibold', children: 'Fachwerk' })]
   if (!S.link) {
     return Box({ flexDirection: 'row', gap: 1, children: [...head('warning'), Text({ color: 'warning', children: 'übernommen' }),
-      Text({ dimColor: true, size: 'footnote', wrap: 'truncate-end', children: 'Das Gefüge führt die Session; hier wird nichts mehr gemeldet.' })] })
+      Text({ dimColor: true, size: 'footnote', wrap: 'truncate-end', children: 'Die Session wird jetzt woanders geführt; hier wird nichts mehr gemeldet.' })] })
   }
   const stufe = stufeOf(S.link.profile)
   const state = S.stopped ? 'hört nicht zu: ' + S.stopped : S.busy ? 'meldet' : S.listening ? 'hört zu' : 'verbunden'
@@ -341,11 +371,22 @@ export const register: Register = on => {
     S.takenOver = false
     await $.command.register({ name: 'fachwerk-verbinden', description: 'Diese Session ausdrücklich mit einem Fachwerk-Gespräch verbinden', argumentHint: '[instanz]' })
     await $.command.register({ name: 'fachwerk-trennen', description: 'Diese Session von Fachwerk trennen' })
-    if (S.link) listen($)
+    await $.command.register({ name: 'fachwerk-uebernehmen', description: 'Ein Fachwerk-Gespräch, das ein anderer Client führt, in diese Session übernehmen', argumentHint: '<gespräch> [instanz]' })
+    if (S.link) await resume($)
     return started
   })
 
-  on('command.run', { command: 'fachwerk-verbinden' }, async ($, e) => ({ text: await connect($, e.args) }))
+  on('command.run', { command: 'fachwerk-verbinden' }, async ($, e) => {
+    const instance = e.args.trim() || undefined
+    return { text: instance && !SLUG.test(instance) ? 'Nenne die Instanz mit ihrem slug: /fachwerk-verbinden <instanz>' : await connect($, instance) }
+  })
+  on('command.run', { command: 'fachwerk-uebernehmen' }, async ($, e) => {
+    const [conversation, instance, ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
+    if (!conversation || !SLUG.test(conversation) || (instance && !SLUG.test(instance)) || rest.length) {
+      return { text: 'Nenne das Gespräch: /fachwerk-uebernehmen <gespräch> [instanz]' }
+    }
+    return { text: await connect($, instance, conversation) }
+  })
   on('command.run', { command: 'fachwerk-trennen' }, async $ => ({ text: await disconnect($) }))
 
   on('prompt.submit', async ($, e, next) => {

@@ -28,6 +28,11 @@ Gefüge werden. Ohne diesen Befehl sendet das Plugin nichts an das Gefüge.
   du dort, während die Session ruht, weckt der Beitrag sie.
 - Über dem Prompt steht „Fachwerk verbunden“ mit der Stufe der Session. Die
   Stufe bestimmt Modell und Denkstufe nach der Tabelle in `hooks/stufen.ts`.
+- `/fachwerk-uebernehmen <gespräch> [instanz]` übernimmt ein Gespräch, das
+  gerade ein anderer Client führt, in diese Session; der andere Client sendet
+  danach nichts mehr.
+- Stellst du die Stufe im Gefüge um, gilt sie in der Session ab der nächsten
+  Antwort des Gefüges.
 - `/fachwerk-trennen` trennt die Session. Übernimmst du sie im Gefüge, meldet
   das Plugin das hier und sendet danach nichts mehr.
 
